@@ -1,4 +1,11 @@
+// Conditional imports for File and html
+// ignore: avoid_web_libraries_in_flutter
+import 'dart:html' as html;
+import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:video_player/video_player.dart';
 
 void main() {
   runApp(const MyWebsite());
@@ -28,7 +35,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  int _selectedIndex = 0;
+  int _selectedIndex = 4;
 
   final List<String> _menuItems = [
     'History',
@@ -132,8 +139,82 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-class LivePage extends StatelessWidget {
+class LivePage extends StatefulWidget {
   const LivePage({super.key});
+
+  @override
+  State<LivePage> createState() => _LivePageState();
+}
+
+class _LivePageState extends State<LivePage> {
+  VideoPlayerController? _videoPlayerController;
+  bool _isVideoUploaded = false;
+  String? _videoPath;
+  String? _webVideoUrl;
+  bool _showTextWindow = false;
+
+  @override
+  void dispose() {
+    _videoPlayerController?.dispose();
+    if (kIsWeb && _webVideoUrl != null) {
+      html.Url.revokeObjectUrl(_webVideoUrl!);
+    }
+    super.dispose();
+  }
+
+  Future<void> _pickVideo() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.video,
+        allowMultiple: false,
+        withData: true, // Needed for web
+      );
+
+      if (result != null) {
+        setState(() {
+          _showTextWindow = false;
+        });
+        if (kIsWeb) {
+          final bytes = result.files.single.bytes;
+          if (bytes != null) {
+            final blob = html.Blob([bytes], 'video/mp4');
+            final url = html.Url.createObjectUrlFromBlob(blob);
+            setState(() {
+              _webVideoUrl = url;
+              _isVideoUploaded = true;
+            });
+            _videoPlayerController = VideoPlayerController.network(url)
+              ..initialize().then((_) {
+                setState(() {});
+                _videoPlayerController?.play();
+              });
+          }
+        } else {
+          setState(() {
+            _videoPath = result.files.single.path;
+            _isVideoUploaded = true;
+          });
+          _videoPlayerController = VideoPlayerController.file(File(_videoPath!))
+            ..initialize().then((_) {
+              setState(() {});
+              _videoPlayerController?.play();
+            });
+        }
+        // Show the text window after 4 seconds
+        Future.delayed(const Duration(seconds: 4), () {
+          if (mounted) {
+            setState(() {
+              _showTextWindow = true;
+            });
+          }
+        });
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error picking video: $e')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -148,29 +229,111 @@ class LivePage extends StatelessWidget {
             fit: BoxFit.contain,
           ),
           const SizedBox(height: 50),
-          ElevatedButton.icon(
-            onPressed: () {
-              // Handle live capture
-            },
-            icon: const Icon(Icons.camera_alt),
-            label: const Text('Live Capture'),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-              textStyle: const TextStyle(fontSize: 18),
+          if (!_isVideoUploaded) ...[
+            ElevatedButton.icon(
+              onPressed: _pickVideo,
+              icon: const Icon(Icons.upload_file),
+              label: const Text('Upload Video'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                textStyle: const TextStyle(fontSize: 18),
+              ),
             ),
-          ),
-          const SizedBox(height: 20),
-          ElevatedButton.icon(
-            onPressed: () {
-              // Handle upload video
-            },
-            icon: const Icon(Icons.upload_file),
-            label: const Text('Upload Video'),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-              textStyle: const TextStyle(fontSize: 18),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: () {
+                // Handle live capture
+              },
+              icon: const Icon(Icons.camera_alt),
+              label: const Text('Live Capture'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                textStyle: const TextStyle(fontSize: 18),
+              ),
             ),
-          ),
+          ] else ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 400,
+                  height: 300,
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: _videoPlayerController?.value.isInitialized ?? false
+                      ? AspectRatio(
+                          aspectRatio: _videoPlayerController!.value.aspectRatio,
+                          child: VideoPlayer(_videoPlayerController!),
+                        )
+                      : const Center(child: CircularProgressIndicator()),
+                ),
+                if (_showTextWindow) ...[
+                  const SizedBox(width: 24),
+                  Container(
+                    width: 400,
+                    height: 300,
+                    decoration: BoxDecoration(
+                      color: Color(0xFFF5F5F5),
+                      border: Border.all(color: Colors.grey),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    padding: const EdgeInsets.all(24),
+                    child: const Center(
+                      child: Text(
+                        'some random text',
+                        style: TextStyle(fontSize: 18, color: Colors.black87),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 20),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton(
+                  icon: Icon(
+                    _videoPlayerController?.value.isPlaying ?? false
+                        ? Icons.pause
+                        : Icons.play_arrow,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      if (_videoPlayerController?.value.isPlaying ?? false) {
+                        _videoPlayerController?.pause();
+                      } else {
+                        _videoPlayerController?.play();
+                      }
+                    });
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: () {
+                    setState(() {
+                      _videoPlayerController?.seekTo(Duration.zero);
+                      _videoPlayerController?.play();
+                    });
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () {
+                    setState(() {
+                      _videoPlayerController?.dispose();
+                      _videoPlayerController = null;
+                      _isVideoUploaded = false;
+                      _videoPath = null;
+                    });
+                  },
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
